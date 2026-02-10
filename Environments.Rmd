@@ -1,16 +1,24 @@
-# ecodi_python
+---
+title: "Environments"
+output: html_document
+date: "2026-02-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
 
 ## Conda environments
 
 ### List conda environments
 
-```
+```{bash, eval=FALSE}
 conda env list 
 ```
 
 ### Activate conda environment
 
-```
+```{bash, eval=FALSE}
 conda activate dev_python 
 ```
 
@@ -19,14 +27,14 @@ conda activate dev_python
 
 ### Jupyter Lab
 
-```
+```{bash, eval=FALSE}
 pip install ipykernel  
 pip install jupyterlab  
 ```
 
 ### DBMS connectors
 
-```
+```{bash, eval=FALSE}
 pip install psycopg2 
 pip install mysql-connector-python
 pip install sqlalchemy
@@ -35,7 +43,7 @@ pip install sqlalchemy
 
 ### Create packages connectors
 
-```
+```{bash, eval=FALSE}
 pip install build  
 ```
 
@@ -43,7 +51,7 @@ pip install build
 
 ### Create package structure
 
-```
+```{bash, eval=FALSE}
 (dev_python) ip-192-168-100-37:ecodi_python choonghyunryu$ tree
 .
 ├── conda.R
@@ -73,14 +81,12 @@ pip install build
 
 ### Build package
 
-```
+```{bash, eval=FALSE}
 python -m build
 ```
 
 ### Install package
 
-```
+```{bash, eval=FALSE}
 pip install ./dist/ecodi-0.0.9-py3-none-any.whl
 ```
-
-
