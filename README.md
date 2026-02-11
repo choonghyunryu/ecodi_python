@@ -44,19 +44,17 @@ pip install build
 ### Create package structure
 
 ```
-(dev_python) ip-192-168-100-37:ecodi_python choonghyunryu$ tree
+$ tree
 .
-├── conda.R
 ├── dist
-│   ├── ecodi-0.0.9-py3-none-any.whl
-│   └── ecodi-0.0.9.tar.gz
-├── ecodi_python.Rproj
-├── Environments.Rmd
+│   ├── ecodi-0.1.0-py3-none-any.whl
+│   └── ecodi-0.1.0.tar.gz
 ├── pyproject.toml
 ├── README.md
 ├── src
 │   ├── ecodi
 │   │   ├── __init__.py
+│   │   ├── API.py
 │   │   ├── DBMS.py
 │   │   ├── env.py
 │   │   └── KOSIS.py
@@ -67,7 +65,7 @@ pip install build
 │       └── top_level.txt
 └── tests
 
-6 directories, 15 files
+6 directories, 13 files
 ```
 
 

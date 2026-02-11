@@ -1,0 +1,12 @@
+prd_se,prd_desc,prd_cd,out_json,out_sdmx
+일,1일 주기,D,D,D
+월,1개월 주기,M,M,M
+분기,3개월 주기,Q,Q,Q
+반기,6개월 주기,H,H,H
+년,1년 주기,Y,Y,Y
+2년,2년 주기,F,F,F
+3년,3년 주기,F,F,F
+4년,4년 주기,F,F,F
+5년,5년 주기,F,F,F
+10년,10년 주기,F,F,F
+부정기,"1회한, 수시 등",IR,IR,IR

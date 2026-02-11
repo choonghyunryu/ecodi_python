@@ -1,0 +1,3 @@
+api_url_id,api_url_nm,is_usekey,key_id,call_url,call_methd,return_type,param_cnt,limit_cell_cnt
+AU0001,KOSIS 통계목록 조회 서비스,Y,KOSIS,https://kosis.kr/openapi/statisticsList.do,GET,JSON,6,400000
+AU0002,KOSIS 통계자료 조회 서비스,Y,KOSIS,https://kosis.kr/openapi/Param/statisticsParameterData.do,GET,JSON,21,400000

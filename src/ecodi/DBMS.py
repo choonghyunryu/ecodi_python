@@ -14,10 +14,11 @@ from sqlalchemy import create_engine, text, inspect, insert
 from sqlalchemy import MetaData
 from sqlalchemy import Table, Column, DateTime, Integer, String
 from sqlalchemy.engine import Engine, Connection
+from sqlalchemy.exc import SQLAlchemyError
 import random
 from datetime import datetime
 import pandas as pd
-
+import numpy as np
 
 # ----------------------------------------------------------------------
 # Simple environment‑like storage (mirrors the R get_env / set_env helpers)
@@ -209,69 +210,60 @@ def db_close(schema: Union[str, List[str]] = ["meta", "ods", "data"]) -> bool:
     return True
 
 
-def query_from_file(
-    con: Connection,
-    sql_file: Optional[str] = None,
-    is_ddl: bool = False,
-):
+def query_from_file(con, sql_file: str = None, is_ddl: bool = False):
     """
     Execute SQL statements stored in a file.
 
     Parameters
     ----------
     con : sqlalchemy.engine.Connection
-        An active connection (e.g. ``engine.connect()``).
-    sql_file : str
-        Path to a ``.sql`` file.
+        Live DB connection.
+    sql_file : str, optional
+        Path to the file that contains the SQL code.
     is_ddl : bool, default False
-        If ``True`` the file may contain multiple statements that will be
-        executed sequentially (DDL/DML).  If ``False`` the file must contain a
-        single SELECT‑type statement and the function returns the resulting rows
-        as a list of dictionaries.
-
-    Raises
-    ------
-    FileNotFoundError
-        When ``sql_file`` is missing or does not exist.
-    RuntimeError
-        When the file contains no valid statements or contains multiple
-        statements while ``is_ddl`` is ``False``.
+        If True, the file may contain multiple DDL statements that will be
+        executed one‑by‑one. If False only a single statement is permitted.
     """
-    if not sql_file or not os.path.isfile(sql_file):
+    if sql_file is None or not os.path.isfile(sql_file):
         raise FileNotFoundError("SQL file does not exist.")
 
-    # Load the whole file as a string
-    with open(sql_file, "r", encoding="utf-8") as f:
+    # read the whole file
+    with open(sql_file, encoding="utf-8") as f:
         sql_query_string = f.read()
 
-    # Split on semicolons, trim whitespace and discard empty parts
-    raw_statements = sql_query_string.split(";")
+    # split on ';', strip whitespace and drop empty fragments
     sql_statements = [
-        stmt.strip() for stmt in raw_statements if stmt.strip()
+        stmt.strip()
+        for stmt in sql_query_string.split(";")
+        if stmt.strip()
     ]
 
     if not sql_statements:
-        raise RuntimeError("No valid SQL statements found in the file.")
+        raise ValueError("No valid SQL statements found in the file.")
     if len(sql_statements) > 1 and not is_ddl:
-        raise RuntimeError(
-            "Multiple SQL statements found in the file, but 'is_ddl' is False. "
-            "Set 'is_ddl' to True to execute multiple statements."
+        raise ValueError(
+            "Multiple SQL statements found in the file, but 'is_ddl' is FALSE. "
+            "Set 'is_ddl' to TRUE to execute multiple statements."
         )
 
+    set_env("STATUS", "1")
+    set_env("EMSG", "")
+
     if is_ddl:
-        # Execute each statement individually while catching errors
-        for stmt in sql_statements:
+        for sql in sql_statements:
             try:
-                con.execute(text(stmt))
-            except Exception as e:  # pragma: no cover
-                # Store error information in the pseudo‑environment for later use
+                with con.begin() as conn:
+                    result = conn.execute(text(sql))
+            except SQLAlchemyError as e:
                 set_env("STATUS", "0")
                 set_env("EMSG", str(e))
     else:
-        # For a single SELECT‑type statement return the fetched rows
-        result = con.execute(text(sql_query_string))
-        rows = [dict(row) for row in result]
-        return rows
+        # When not DDL we use the original whole text (allows multi‑line SELECTs)
+        try:
+            result = pd.read_sql_query(text(sql_query_string), con)
+            return result
+        except SQLAlchemyError as e:
+            raise RuntimeError(f"Error executing query: {e}")
       
 
 def get_connection(schema: str):
@@ -539,7 +531,7 @@ def db_settable(
     append: bool = False,
     schema: str = "meta",
     is_postfix: bool = True,
-    dbms: str = os.getenv("ecoDI_DBMS", "postgresql")
+    dbms: str = get_env("ecoDI_DBMS")
 ) -> pd.DataFrame | None:
     """
     Write a pandas DataFrame to a database table, log the operation and
@@ -689,6 +681,185 @@ def db_settable(
         conn.commit()
 
     return result
+
+
+def ddl_from_text(con, txt: str = None, verbose: bool = False):
+    """
+    Execute DDL statements supplied as a plain text string.
+
+    Parameters
+    ----------
+    con : sqlalchemy.engine.Connection
+        Live DB connection.
+    txt : str, optional
+        DDL statements separated by ';'.
+    verbose : bool, default False
+        If True, print error messages for each failing statement.
+    """
+    if txt is None:
+        raise ValueError("DDL text does not exist.")
+
+    sql_statements = [
+        stmt.strip()
+        for stmt in txt.split(";")
+        if stmt.strip()
+    ]
+
+    for sql in sql_statements:
+        try:
+            con.execute(text(sql))
+        except SQLAlchemyError as e:
+            if verbose:
+                print(f"Error executing SQL: {sql}")
+            set_env("STATUS", "0")
+            set_env("EMSG", str(e))
+
+
+def db_load_csv(name: str,
+                file_name: str = None,
+                row_names: bool = False,
+                overwrite: bool = False,
+                append: bool = False,
+                schema: str = "meta",
+                is_postfix: bool = True,
+                dbms: str = None):
+    """
+    Load a CSV file into a database table.
+
+    Parameters
+    ----------
+    name : str
+        Target table name.
+    file_name : str, optional
+        Path to the CSV file.
+    row_names : bool, default False
+        If True, include the CSV index as a column.
+    overwrite : bool, default False
+        Drop the existing table before writing (if True).
+    append : bool, default False
+        Append to an existing table (if True).
+    schema : {'meta', 'ods', 'data'}, default 'meta'
+        Database schema to use.
+    is_postfix : bool, default True
+        Whether to add audit columns (creation / modification info).
+    dbms : str, optional
+        Database management system identifier (e.g., 'mysql').
+    """
+    schema = schema.lower()
+    if schema not in ("meta", "ods", "data"):
+        raise ValueError("Invalid schema; must be one of 'meta', 'ods', or 'data'.")
+
+    if file_name is None or not os.path.isfile(file_name):
+        raise FileNotFoundError("CSV file does not exist.")
+
+    # ------------------------------------------------------------------
+    # Load CSV
+    # ------------------------------------------------------------------
+    df = pd.read_csv(file_name, dtype=str)          # force strings like R's read.csv
+    if not row_names:
+        df.reset_index(drop=True, inplace=True)
+
+    # ------------------------------------------------------------------
+    # Optional audit columns
+    # ------------------------------------------------------------------
+    if is_postfix:
+        now = datetime.now()
+        df["cret_dt"] = now
+        df["cret_nm"] = "ecoDI"
+        df["mdfy_dt"] = pd.NA
+        df["mdfy_nm"] = pd.NA
+
+    # ------------------------------------------------------------------
+    # Validate DB connection
+    # ------------------------------------------------------------------
+    if not is_connected(schema):
+        raise RuntimeError("DB not connected !!!")
+
+    # environment flags used by the original script
+    set_env("STATUS", "1")
+    set_env("EMSG", "")
+
+    start_dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # ------------------------------------------------------------------
+    # Write to DB
+    # ------------------------------------------------------------------
+    conn = get_env(f"{schema.upper()}_CON")   # expects a SQLAlchemy engine/connection
+    if conn is None:
+        raise RuntimeError(f"Connection for schema {schema} not found in env.")
+
+    result = None
+    dbms = get_env("ecoDI_DBMS")
+    
+    try:
+        db_settable(
+            name = table_name,
+            value = df,
+            row_names = row_names,
+            overwrite = overwrite,
+            append = append,
+            schema = schema,
+            is_postfix = is_postfix, 
+            dbms = dbms)
+    except Exception as e:   
+        set_env("STATUS", "0")
+        set_env("EMSG", str(e))
+        result = False
+        
+    end_dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # ------------------------------------------------------------------
+    # Build log entry (mirrors the R implementation)
+    # ------------------------------------------------------------------
+    status = get_env("STATUS")
+    emsg = get_env("EMSG")
+    emsg = emsg.replace("'", r"\'")   # escape single quotes for SQL
+
+    uid = get_env("USERNAME")
+    dbinfo_b64 = get_env(f"{schema.upper()}_INFO")
+    dbinfo = base64.b64decode(dbinfo_b64).decode() if dbinfo_b64 else ""
+    dbid = dbinfo.split(":")[0] if ":" in dbinfo else ""
+
+    rcnt = 0 if status == "0" else len(df)
+    ccnt = 0 if status == "0" else len(df.columns)
+
+    sql_placeholder = f"Insert table {name}" if append else f"Create table {name}"
+    rnd = np.random.randint(0, 100_000_000)
+    rnd = rnd * 10 if rnd < 100_000_000 else rnd
+
+    schema_nm = f"ecodi_{schema}"
+
+    log_sql = f"""
+        INSERT INTO ecodi_meta.mt_log_manage
+        (user_id, db_id, schema_nm, start_dt, rand_key, end_dt,
+         record_cnt, column_cnt, sql_stmt, status, error_msg, cret_nm)
+        VALUES ('{uid}', '{dbid}', '{schema_nm}', '{start_dt}', {rnd},
+                '{end_dt}', {rcnt}, {ccnt}, '{sql_placeholder}',
+                '{status}', '{emsg}', '{uid}');
+    """
+
+    # ------------------------------------------------------------------
+    # Commit the log
+    # ------------------------------------------------------------------
+    db_close(schema)
+
+    # ensure we are connected to the meta schema for logging
+    db_connect("meta")
+    meta_conn = get_env("META_CON")
+    if meta_conn is None:
+        raise RuntimeError("Meta connection not found in environment.")
+        
+    try:
+        with meta_conn.begin() as conn:   # ensures transaction handling
+            conn.execute(text(log_sql))
+        if dbms == "mysql":
+            meta_conn.commit()
+    except SQLAlchemyError as e:
+        # Even if logging fails, we don't want to raise – original code ignores it.
+        pass
+
+    return result
+
   
   
 # Exported symbols (similar to R's @export)
@@ -707,6 +878,7 @@ __all__ = [
     "deletequery",
     "is_tabled",
     "db_settable",
+    "db_load_csv",
 ]
 
   

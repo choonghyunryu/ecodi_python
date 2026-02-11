@@ -1,0 +1,5 @@
+key_id,user_id_enc,org_nm,org_nm_en,key_enc,manage_url,reg_nm_enc,reg_id_enc,valid_date,used
+KOSIS,Y2hvb25naHl1bnJ5dQ==,국가데이터처,Ministry of Data and Statistics,TnpZMFkyRTVNVFE1TkRVMU56TmpNVFE1T0RBNVpXWTJZbU13T0dVeE1qZz0=,https://kosis.kr/openapi/mypage/myPage_01List.do,7Jyg7Lap7ZiE,YmRib3kwMQ==,2027-09-19,Y
+KOSIS,Y2hvb25naHl1bi5yeXU=,국가데이터처,Ministry of Data and Statistics,TnpZMFkyRTVNVFE1TkRVMU56TmpNVFE1T0RBNVpXWTJZbU13T0dVeE1qZz0=,https://kosis.kr/openapi/mypage/myPage_01List.do,7Jyg7Lap7ZiE,YmRib3kwMQ==,2027-09-19,Y
+SEOUL,Y2hvb25naHl1bnJ5dQ==,서울특별시,Seoul Metropolitan Government,NDE3NjRmNjU2OTYyNjQ2MjM2MzM2NDRhNzA0YTU0,https://data.seoul.go.kr/together/mypage/actkeyMng_ss.do,7Jyg7Lap7ZiE,YmRib3kwMQ==,2027-09-22,Y
+SEOUL,Y2hvb25naHl1bi5yeXU=,서울특별시,Seoul Metropolitan Government,NDE3NjRmNjU2OTYyNjQ2MjM2MzM2NDRhNzA0YTU0,https://data.seoul.go.kr/together/mypage/actkeyMng_ss.do,7Jyg7Lap7ZiE,YmRib3kwMQ==,2027-09-22,Y

@@ -1,0 +1,4 @@
+schema_nm,schema_use
+ecodi_meta,ecoDI 시스템 구성을 위한 메타 데이터 저장소
+ecodi_ods,"외부 데이터 원천 형상이 최종 테이블 구조가 아닐 때, 임시로 사용하는 전처리 용도의 저장공간(ODS)"
+ecodi_data,사용자가 외부 데이터를 사용하기 위한 데이터 저장소

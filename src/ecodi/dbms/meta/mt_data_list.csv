@@ -1,0 +1,2 @@
+data_id,raw_site_id,api_url_id,data_nm,raw_table_id,raw_table_nm,raw_schema_nm,site_page_url,site_page_nm,prvdr_nm,prvdr_nm_eng,prvdr_dept_nm,prvdr_phone,prvdr_cycle,data_end_pov,data_start_pov,pov_region_mega,pov_region_cty,pov_region_admi,pov_age_lc,pov_age_10,pov_age_5
+DA0001,RS0001,AU0001,KOSIS 통계목록,MT_KOSIS_STAT,KOSIS 통계목록,ecodi_ods,https://kosis.kr/openapi/devGuide/devGuide_0101List.do,개발가이드 > 통계목록,국가데이터처,Ministry of Data and Statistics,통계서비스기획과,042-481-2457,N,,,N,N,N,N,N,N

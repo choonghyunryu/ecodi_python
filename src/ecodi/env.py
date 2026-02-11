@@ -1,6 +1,7 @@
 import os
 import subprocess
 import base64
+import importlib.resources
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -111,6 +112,62 @@ def decode_base64(b64_string: str) -> str:
     return raw_bytes.decode("utf-8")
 
 
+# Assume the following helpers are defined in the ecoDI package
+# get_env, is_connected, db_connect, query_from_file, db_load_csv, cli_alert_info, system_file
+
+def initial_meta(dbms: str = None) -> None:
+    """
+    Create tables and load meta data for the specified DBMS.
+
+    Parameters
+    ----------
+    dbms : str, optional
+        Identifier of the DBMS to use. If not provided, the value is taken from the
+        environment variable ``ecoDI_DBMS`` via ``get_env``.
+    """
+    # Resolve default DBMS value
+    if dbms is None:
+        dbms = get_env("ecoDI_DBMS")
+
+    # Ensure a connection to the meta schema exists
+    if not is_connected("meta"):
+        db_connect("meta")
+
+    # Paths inside the installed ecoDI package
+    ddl_path = importlib.resources.files(f'ecodi.dbms.ddl.{dbms}')
+    meta_path = importlib.resources.files('ecodi.dbms.meta')
+
+    # --------------------------------------------------
+    # 1) Create tables from DDL files
+    # --------------------------------------------------
+    for ddl_file in Path(str(ddl_path._paths[0])).glob("*.sql"):
+        print(f"Creating table from {ddl_file}")
+        query_from_file(
+            get_env("META_CON"),
+            sql_file=str(ddl_file),
+            is_ddl=True
+        )
+
+    # --------------------------------------------------
+    # 2) Load CSV meta‑data files
+    # --------------------------------------------------
+    for csv_file in Path(str(meta_path._paths[0])).glob("*.csv"):
+        print(f"Loading meta data from {csv_file}")
+
+        # Derive table name from the CSV file name (remove extension)
+        table_name = csv_file.stem
+
+        db_load_csv(
+            name=table_name,
+            file_name=str(csv_file),
+            row_names=False,
+            overwrite=False,
+            append=True,
+            schema="meta",
+            is_postfix=True
+        )
+        
+        
 # Exported symbols (similar to R's @export)
 __all__ = [
     "get_sysenv",
@@ -121,4 +178,5 @@ __all__ = [
     "init_env",
     "encode_base64",
     "decode_base64",
+    "initial_meta",
 ]
