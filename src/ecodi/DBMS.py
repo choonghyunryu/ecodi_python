@@ -20,6 +20,20 @@ from datetime import datetime
 import pandas as pd
 import numpy as np
 
+from ecodi.env import (
+    init_env,
+    ecoDI_env,
+    get_sysenv,
+    set_env,
+    unset_env,
+    get_env,
+    ecoDI_env,
+    init_env,
+    encode_base64,
+    decode_base64,
+    initial_meta
+)
+
 # ----------------------------------------------------------------------
 # Simple environment‑like storage (mirrors the R get_env / set_env helpers)
 # ----------------------------------------------------------------------
@@ -860,7 +874,6 @@ def db_load_csv(name: str,
 
     return result
 
-  
   
 # Exported symbols (similar to R's @export)
 __all__ = [

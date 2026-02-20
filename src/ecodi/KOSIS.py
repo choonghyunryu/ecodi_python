@@ -9,6 +9,40 @@ import requests
 import itertools
 from datetime import datetime
 
+
+from ecodi.env import (
+    init_env,
+    ecoDI_env,
+    get_sysenv,
+    set_env,
+    unset_env,
+    get_env,
+    ecoDI_env,
+    init_env,
+    encode_base64,
+    decode_base64,
+    initial_meta
+)
+
+from ecodi.DBMS import (
+    _match_arg,
+    _build_connection_string,
+    db_connect,
+    meta_connect,
+    ods_connect,
+    data_connect,
+    is_connected,
+    db_close,
+    query_from_file,
+    get_connection,
+    getquery,
+    deletequery,
+    is_tabled,
+    db_settable,
+    db_load_csv,
+)
+
+  
 # ----------------------------------------------------------------------
 # Core translation functions
 # ----------------------------------------------------------------------
@@ -1196,6 +1230,7 @@ def import_kosis_indexpl(
 # Exported symbols (similar to R's @export)
 __all__ = [
     "desc_kosis_stats",
+    "get_kosis_stats",
     "from_meta_kosisdesc",
     "get_kosis_indexpl",
     "get_kosis_info",
