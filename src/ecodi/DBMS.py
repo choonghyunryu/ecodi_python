@@ -16,9 +16,12 @@ from sqlalchemy import Table, Column, DateTime, Integer, String
 from sqlalchemy.engine import Engine, Connection
 from sqlalchemy.exc import SQLAlchemyError
 import random
-from datetime import datetime
+import tempfile
+from datetime import datetime, date
 import pandas as pd
 import numpy as np
+import subprocess
+from pathlib import Path
 
 from ecodi.env import (
     init_env,
@@ -545,12 +548,18 @@ def db_settable(
     append: bool = False,
     schema: str = "meta",
     is_postfix: bool = True,
-    dbms: str = get_env("ecoDI_DBMS")
+    dbms: str | None = None
 ) -> pd.DataFrame | None:
     """
     Write a pandas DataFrame to a database table, log the operation and
     return the result of the write (or None on failure).
     """
+    
+    if dbms is None:
+        dbms = get_env("ecoDI_DBMS")
+    if dbms not in {"mysql", "postgresql"}:
+        raise ValueError("`dbms` must be either 'mysql' or 'postgresql'")
+      
     # ------------------------------------------------------------------
     # Validate schema argument (matches R's match.arg)
     # ------------------------------------------------------------------
@@ -874,11 +883,408 @@ def db_load_csv(name: str,
 
     return result
 
+
+
+def _read_sql_file(file_path: Path) -> str:
+    """Read the entire content of a SQL file."""
+    return file_path.read_text(encoding="utf-8")
+
+
+def _split_sql_statements(sql_text: str) -> list[str]:
+    """
+    Split a SQL script into individual statements, removing whitespace
+    and discarding empty parts.
+    """
+    return [stmt.strip() for stmt in sql_text.split(";") if stmt.strip()]
+
+
+def query_from_file(con, sql_file: str | os.PathLike = None, is_ddl: bool = False):
+    """
+    Execute SQL stored in a file.
+
+    Parameters
+    ----------
+    con : DB‑API connection or SQLAlchemy engine/connection
+        Database connection used for executing the query.
+    sql_file : str or Path, optional
+        Path to the SQL file.
+    is_ddl : bool, default False
+        If True, treat the script as DDL/DML that may contain multiple
+        statements; each statement is executed separately.
+        If False, the whole script is sent as a single query and the
+        result set is returned.
+
+    Returns
+    -------
+    pandas.DataFrame or None
+        Query result when ``is_ddl`` is False; otherwise ``None``.
+    """
+    if sql_file is None or not Path(sql_file).exists():
+        raise FileNotFoundError("SQL file does not exist.")
+
+    sql_path = Path(sql_file)
+    sql_text = _read_sql_file(sql_path)
+    sql_statements = _split_sql_statements(sql_text)
+
+    if not sql_statements:
+        raise ValueError("No valid SQL statements found in the file.")
+
+    if len(sql_statements) > 1 and not is_ddl:
+        raise ValueError(
+            "Multiple SQL statements found in the file, but 'is_ddl' is False. "
+            "Set 'is_ddl' to True to execute multiple statements."
+        )
+
+    if is_ddl:
+        # Execute each statement individually; errors are captured but do not stop the loop.
+        for statement in sql_statements:
+            try:
+                # ``execute`` works for both DB‑API connections and SQLAlchemy objects.
+                con.execute(statement)
+            except Exception as e:          # pragma: no cover
+                set_env("STATUS", "0")
+                set_env("EMSG", e)
+    else:
+        # Single‑statement query – return the fetched rows as a DataFrame.
+        result_df = pd.read_sql_query(sql_text, con)
+        return result_df
+
+
+def ddl_from_text(con, txt: str = None, verbose: bool = False):
+    """
+    Execute DDL/DML statements provided as a raw text string.
+
+    Parameters
+    ----------
+    con : DB‑API connection or SQLAlchemy engine/connection
+        Database connection used for executing the statements.
+    txt : str, optional
+        Text containing one or more SQL statements separated by ``;``.
+    verbose : bool, default False
+        If True, print a message for each statement that fails.
+    """
+    if txt is None:
+        raise ValueError("DDL text does not exist.")
+
+    sql_statements = _split_sql_statements(txt)
+
+    for statement in sql_statements:
+        try:
+            con.execute(statement)
+        except Exception as e:              # pragma: no cover
+            if verbose:
+                print(f"Error executing SQL: {statement}")
+            set_env("STATUS", "0")
+            set_env("EMSG", e)
+            
+
+def db_load_df(name: str = None,
+               value: pd.DataFrame = None,
+               schema: str = "data",
+               dbms: str = None):
+    """
+    Load a pandas DataFrame into an EcoDI table, logging the operation.
+
+    Parameters
+    ----------
+    name : str
+        Target table name (required).
+    value : pd.DataFrame
+        Data to be loaded (required).
+    schema : {"data", "ods", "meta"}
+        Database schema to use.
+    dbms : str
+        Database management system. If ``None`` the value is read from the
+        simulated environment variable ``ecoDI_DBMS``.
+    """
+    # Resolve defaults and validate inputs
+    schema = schema.lower()
+    allowed_schemas = {"data", "ods", "meta"}
+    if schema not in allowed_schemas:
+        raise ValueError(f"schema must be one of {allowed_schemas}")
+
+    if dbms is None:
+        dbms = get_env("ecoDI_DBMS")
+    if name is None:
+        raise ValueError("'name' must be provided.")
+    if value is None or not isinstance(value, pd.DataFrame) or value.empty:
+        raise ValueError("`value` must be a non‑empty pandas DataFrame.")
+
+    # Append audit columns
+    value = value.copy()
+    now = datetime.now()
+    value["cret_dt"] = now
+    value["cret_nm"] = "ecoDI"
+    value["mdfy_dt"] = pd.NA
+    value["mdfy_nm"] = pd.NA
+
+    if dbms == "postgresql":
+        name = name.lower()
+        value.columns = [col.lower() for col in value.columns]
+        
+    # CSV export settings
+    na_rep = "NULL" if dbms == "mysql" else ""
+    temp_dir = tempfile.gettempdir()
+    file_name = os.path.join(
+        temp_dir,
+        f"temp_ecodi_load_{date.today()}.csv"
+    )
+    value.to_csv(file_name, index=False, encoding="utf-8", na_rep=na_rep)
+
+    # Ensure a connection exists
+    if not is_connected(schema):
+        db_connect(schema)
+
+    # Fully‑qualified table name (e.g. ecodi_data.my_table)
+    table_name = f"ecodi_{schema}.{name}"
+
+    # Build the DB‑specific load statement
+    if dbms == "mysql":
+        load_sql = (
+            f"LOAD DATA LOCAL INFILE '{file_name}' "
+            f"INTO TABLE {table_name} "
+            f"FIELDS TERMINATED BY ',' "
+            f"ENCLOSED BY '\"' "
+            f"LINES TERMINATED BY '\\n' "
+            f"IGNORE 1 ROWS;"
+        )
+    elif dbms == "postgresql":
+        load_sql = (
+            f"\\COPY {table_name} FROM '{file_name}' "
+            f"DELIMITER ',' CSV HEADER;"
+        )
+    else:
+        raise ValueError(f"Unsupported DBMS: {dbms}")
+
+    # Execution timestamps
+    start_timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    result = None
+    set_env("STATUS", "1")
+    set_env("EMSG", "")
+
+    # User and DB identification (place‑holders)
+    uid = get_env("USERNAME")
+    dbinfo_encoded = get_env(f"{schema.upper()}_INFO")
+    dbinfo = decode_base64(dbinfo_encoded) if dbinfo_encoded else ""
+    dbid = dbinfo.split(":")[0] if dbinfo else ""
+    password = dbinfo.split(":")[1] if dbinfo else ""
+    
+    # Execute the load statement
+    if dbms == "mysql":
+        engine = get_env(f"{schema.upper()}_CON")
+        try:
+            with engine.begin() as conn:
+                result = conn.execute(text(load_sql))
+        except SQLAlchemyError as e:
+            set_env("STATUS", "0")
+            set_env("EMSG", str(e))
+    elif dbms == "postgresql":
+        os.environ['PGPASSWORD'] = password
+        try:
+            result = subprocess.run(
+                ["psql", "-U", "ecodi", "-c", load_sql],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            print("Command output:", result.stdout)
+        except subprocess.CalledProcessError as e:
+            set_env("STATUS", "0")
+            set_env("EMSG", e.stderr)
+
+    end_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Retrieve status and error information
+    status = get_env("STATUS")
+    emsg = str(get_env("EMSG")).replace("'", r"\'")
+
+    # Record counts (only meaningful when status == "1")
+    record_cnt = 0 if status == "0" else len(value)
+    column_cnt = 0 if status == "0" else len(value.columns)
+
+    # Human‑readable description of the operation
+    sql_desc = f"Load data from DataFrame to table {name}"
+
+    # Random key for logging
+    rnd = int(random.random() * 100_000_000)
+    rnd = rnd * 10 if rnd < 100_000_000 else rnd
+
+    schema_name = f"ecodi_{schema}"
+
+    # ------------------------------------------------------------------
+    # Build the logging INSERT statement (meta.mt_log_manage)
+    # ------------------------------------------------------------------
+    if dbms == "mysql":
+        log_sql = f"""INSERT INTO ecodi_meta.mt_log_manage 
+                      SET user_id = '{uid}', db_id = '{dbid}', schema_nm = '{schema_name}', 
+                          start_dt = '{start_timestamp}', rand_key = {rnd}, end_dt = '{end_timestamp}', 
+                          record_cnt = {record_cnt}, column_cnt = {column_cnt}, 
+                          sql_stmt = '{sql_desc}', status = '{status}', 
+                          error_msg = '{emsg}', cret_nm = '{uid}';"""
+    else:  # postgresql
+        log_sql = f"""INSERT INTO ecodi_meta.mt_log_manage 
+                      (user_id, db_id, schema_nm, start_dt, rand_key, end_dt, 
+                       record_cnt, column_cnt, sql_stmt, status, error_msg, cret_nm)
+                      VALUES ('{uid}', '{dbid}', '{schema_name}', '{start_timestamp}', {rnd},
+                              '{end_timestamp}', {record_cnt}, {column_cnt}, 
+                              '{sql_desc}', '{status}', '{emsg}', '{uid}');"""
+
+    # Execute the log insert (using the same engine)
+    engine = get_env(f"{schema.upper()}_CON")
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(log_sql))
+    except SQLAlchemyError as e:
+        # Logging failures are intentionally ignored here, mirroring the original script.
+        pass
+
+    # Clean up the temporary CSV file
+    try:
+        os.remove(file_name)
+    except OSError:
+        pass
+
+    if dbms == "mysql":
+        # MySQL autocommit handling – the `begin()` context already commits,
+        # but we keep the explicit call for parity with the original R code.
+        conn.commit()
+        
+    # Close the connection
+    db_close(schema)
+
+    return result
+  
+
+def get_odsinfo(type_: str = "df") -> pd.DataFrame:
+    """
+    Retrieve ODS (Open Data Service) information.
+
+    Parameters
+    ----------
+    type_ : {"df", "table"}, default "df"
+        * "df"  – returns a pandas DataFrame.
+        * "table" – returns an HTML table (as a string) with Korean column
+          headers, emulating the R *reactable* output.
+
+    Returns
+    -------
+    pandas.DataFrame or str
+        Depending on *type_*.
+    """
+    # ------------------------------------------------------------------
+    # Validate the `type_` argument (R used match.arg)
+    # ------------------------------------------------------------------
+    if type_ not in {"df", "table"}:
+        raise ValueError("type must be either 'df' or 'table'")
+
+    # ------------------------------------------------------------------
+    # 1️⃣  Execute the SQL query
+    # ------------------------------------------------------------------
+    sql = """
+        SELECT dat.*, tab.table_id 
+        FROM ecodi_meta.mt_data_list dat
+        LEFT JOIN ecodi_meta.mt_table_list tab
+          ON dat.data_id = tab.data_id;
+    """
+
+    ods_list = getquery(sql, "meta")          # <-- returns a DataFrame
+
+    # ------------------------------------------------------------------
+    # 2️⃣  dplyr::mutate – add `etl_yn` column
+    # ------------------------------------------------------------------
+    ods_list["etl_yn"] = ods_list["table_id"].apply(
+        lambda x: "Y" if pd.notna(x) else "N"
+    )
+
+    # ------------------------------------------------------------------
+    # 3️⃣  dplyr::select – drop unnecessary columns
+    # ------------------------------------------------------------------
+    cols_to_drop = [
+        "raw_site_id",
+        "api_url_id",
+        "site_page_url",
+        "cret_nm",
+        "mdfy_dt",
+        "mdfy_nm",
+        "table_id",
+    ]
+    ods_list = ods_list.drop(columns=cols_to_drop, errors="ignore")
+
+    # ------------------------------------------------------------------
+    # 4️⃣  dplyr::filter – keep only rows where raw_schema_nm == "ecodi_ods"
+    # ------------------------------------------------------------------
+    ods_list = ods_list[ods_list["raw_schema_nm"] == "ecodi_ods"].copy()
+
+    # ------------------------------------------------------------------
+    # 5️⃣  Translate `prvdr_cycle` codes back to Korean labels
+    # ------------------------------------------------------------------
+    # R vector:  prd <- c("일"="D", "월"="M", ... )
+    prd = {
+        "일": "D",
+        "월": "M",
+        "분기": "Q",
+        "반기": "H",
+        "년": "Y",
+        "2년": "F",
+        "3년": "F",
+        "4년": "F",
+        "5년": "F",
+        "10년": "F",
+        "부정기": "IR",
+    }
+    # Invert the dictionary to map code → Korean label
+    code_to_korean = {v: k for k, v in prd.items()}
+
+    ods_list["prvdr_cycle"] = ods_list["prvdr_cycle"].map(code_to_korean)
+
+    # ------------------------------------------------------------------
+    # Return the requested representation
+    # ------------------------------------------------------------------
+    if type_ == "df":
+        return ods_list
+
+    # ----- `type_ == "table"` ------------------------------------------------
+    # Build a DataFrame with Korean column names, then output plain HTML.
+    # The interactive features of R's reactable (searchable, filterable,
+    # pagination, etc.) are not recreated here; the HTML can be plugged
+    # into a web front‑end that supplies those capabilities if needed.
+    column_renames = {
+        "data_id": "데이터ID",
+        "data_nm": "데이터명",
+        "raw_table_id": "원천테이블ID",
+        "raw_table_nm": "원천테이블",
+        "raw_schema_nm": "원천스키마",
+        "site_page_nm": "원천사이트명",
+        "prvdr_nm": "제공기관명",
+        "prvdr_nm_eng": "제공기관명(영문)",
+        "prvdr_dept_nm": "제공부서명",
+        "prvdr_phone": "제공기관전화번호",
+        "prvdr_cycle": "제공주기",
+        "data_start_pov": "제공시작일",
+        "data_end_pov": "제공종료일",
+        "pov_region_mega": "시도 여부",
+        "pov_region_cty": "시군구 여부",
+        "pov_region_admi": "읍면동 여부",
+        "pov_age_lc": "생애주기 여부",
+        "pov_age_10": "10세단위 여부",
+        "pov_age_5": "5세단위 여부",
+        "cret_dt": "생성일시",
+        "etl_yn": "ETL여부",
+    }
+
+    html_table = (
+        ods_list.rename(columns=column_renames)
+        .to_html(index=False, escape=False, border=0, classes="ods-table")
+    )
+    return html_table
+  
   
 # Exported symbols (similar to R's @export)
 __all__ = [
     "_match_arg",
     "_build_connection_string",
+    "_read_sql_file",
+    "_split_sql_statements",
     "db_connect",
     "meta_connect",
     "ods_connect",
@@ -892,6 +1298,10 @@ __all__ = [
     "is_tabled",
     "db_settable",
     "db_load_csv",
+    "query_from_file",
+    "ddl_from_text",
+    "db_load_df",
+    "get_odsinfo",
 ]
 
   

@@ -24,7 +24,7 @@ from ecodi.env import (
     initial_meta
 )
 
-from ecodi.DBMS import (
+from ecodi.dbms import (
     _match_arg,
     _build_connection_string,
     db_connect,

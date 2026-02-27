@@ -97,7 +97,17 @@ def init_env() -> None:
 
 def encode_base64(text: str) -> str:
     """
-    Encode a string to base‑64.
+    Encode a plain‑text key using Base64.
+
+    Parameters
+    ----------
+    key_value: str
+        The API key value to encode.
+
+    Returns
+    -------
+    str
+        Base64‑encoded representation of ``key_value``.
     """
     raw_bytes = text.encode("utf-8")
     encoded_bytes = base64.b64encode(raw_bytes)
@@ -106,7 +116,17 @@ def encode_base64(text: str) -> str:
 
 def decode_base64(b64_string: str) -> str:
     """
-    Decode a base‑64 string back to plain text.
+    Decode a Base64‑encoded API key.
+
+    Parameters
+    ----------
+    encoded_key: str
+        The Base64‑encoded key.
+
+    Returns
+    -------
+    str
+        The original plain‑text key.
     """
     raw_bytes = base64.b64decode(b64_string)
     return raw_bytes.decode("utf-8")

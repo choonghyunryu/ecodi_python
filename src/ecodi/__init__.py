@@ -16,9 +16,11 @@ from ecodi.env import (
     initial_meta
 )
 
-from ecodi.DBMS import (
+from ecodi.dbms import (
     _match_arg,
     _build_connection_string,
+    _read_sql_file,
+    _split_sql_statements,    
     db_connect,
     meta_connect,
     ods_connect,
@@ -31,7 +33,11 @@ from ecodi.DBMS import (
     deletequery,
     is_tabled,
     db_settable,
-    db_load_csv
+    db_load_csv,
+    query_from_file,
+    ddl_from_text,
+    db_load_df,
+    get_odsinfo
 )
 
 from ecodi.KOSIS import (
@@ -49,7 +55,7 @@ from ecodi.KOSIS import (
     import_kosis_indexpl
 )
 
-from ecodi.API import (
+from ecodi.api import (
     from_meta_apiurl,
     from_meta_param,
     from_meta_apikey,
@@ -60,7 +66,24 @@ from ecodi.API import (
     get_api_url,
     get_api_result,
     get_api_data,
-    set_apikey_env
+    set_apikey_env,
+    import_api_data
+)
+
+from ecodi.utils import (
+    regist_apikey,
+    unregist_apikey,
+    write_apikey,
+    read_apikey,
+    get_prd_seq,
+    get_os
+)
+
+from ecodi.ecodi_system import (
+    get_log_manage,
+    get_log_import,
+    get_table_list,
+    get_column_list
 )
 
 
