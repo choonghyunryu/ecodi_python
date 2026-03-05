@@ -9,7 +9,6 @@ import requests
 import itertools
 from datetime import datetime
 
-
 from ecodi.env import (
     init_env,
     ecoDI_env,
@@ -40,6 +39,7 @@ from ecodi.dbms import (
     is_tabled,
     db_settable,
     db_load_csv,
+    db_send_query
 )
 
   
@@ -277,15 +277,6 @@ def get_kosis_indexpl(
     ]
 
     return df
-  
-
-import os
-import re
-import itertools
-from typing import Any, List, Optional, Dict
-
-import pandas as pd
-import requests
 
 
 
@@ -572,12 +563,6 @@ def get_kosis_info(
         "info_src": info_src,
         "info_ncd": info_ncd,
     }
-
-
-import os
-import logging
-import requests
-import pandas as pd
 
 
 def get_kosis_explanation(
@@ -1050,20 +1035,6 @@ def kosis_org_list(org_id: Optional[str] = None, is_short: bool = True) -> pd.Da
         result = df.drop(columns=existing_drop)
 
     return result
-  
-
-def db_settable(name: str, value: pd.DataFrame, append: bool, schema: str) -> bool:
-    """Insert a DataFrame into a DB table. Returns True on success."""
-    raise NotImplementedError("`db_settable` must be implemented.")
-
-def db_send_query(sql: str, schema: str) -> None:
-    """Execute a non‑SELECT statement (e.g., INSERT)."""
-    raise NotImplementedError("`db_send_query` must be implemented.")
-
-def db_commit(schema: str) -> None:
-    """Commit the current transaction for the given schema."""
-    raise NotImplementedError("`db_commit` must be implemented.")
-# ----------------------------------------------------------------------
 
 
 def import_kosis_indexpl(
@@ -1137,7 +1108,7 @@ def import_kosis_indexpl(
     uid = get_env("USERNAME")
     # Decode the base‑64 encoded DB information string
     encoded_info = get_env(f"{schema.upper()}_INFO")
-    dbinfo = base64.b64decode(encoded_info).decode()
+    dbinfo = decode_base64(encoded_info)
     dbid = dbinfo.split(":")[0]
 
     table_id = "mt_kosis_indexpl"
@@ -1214,10 +1185,7 @@ def import_kosis_indexpl(
     log_schema = "meta"
     db_connect(log_schema)
     db_send_query(insert_sql, log_schema)
-
-    if dbms.lower() == "mysql":
-        db_commit(log_schema)
-
+        
     if verbose:
         logging.info(
             f"Imported record count: {rcnt}, column count: {ccnt}, status: {status}"
@@ -1225,6 +1193,167 @@ def import_kosis_indexpl(
 
     # Return the success flag (True when data was appended)
     return is_ok
+  
+
+
+def import_kosis_statexpl(
+    stat_id: Optional[str] = None,
+    sleep_seconds: int = 0,
+    verbose: bool = True,
+    dbms: str = get_env("ecoDI_DBMS")
+) -> bool:
+    """
+    Import KOSIS index explanation data into the `mt_kosis_statexpl` table
+    and log the operation in `mt_log_dataimp`.
+
+    Parameters
+    ----------
+    stat_id : str
+        Identifier of the KOSIS stat explain to import (required).
+    sleep_seconds : int, default 0
+        Optional pause before starting the import.
+    verbose : bool, default True
+        Whether to print informational messages.
+    dbms : str
+        Database management system; defaults to the value of the
+        `ecoDI_DBMS` environment variable.
+    Returns
+    -------
+    bool
+        ``True`` if the data was successfully appended, ``False`` otherwise.
+    """
+    if stat_id is None:
+        raise ValueError("'stat_id' must be provided.")
+
+    schema = "meta"
+
+    # Optional sleep before starting the import
+    if sleep_seconds:
+        time.sleep(sleep_seconds)
+
+    if verbose:
+        logging.info(f"Importing KOSIS stat explain for stat ID: {stat_id}")
+
+    # Initialise status tracking
+    is_ok = False
+    set_env("STATUS", "1")
+    set_env("EMSG", "")
+
+    start_dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # ------------------------------------------------------------------
+    # Retrieve the explanation data
+    # ------------------------------------------------------------------
+    try:
+        explain_info = get_kosis_explanation(stat_id=stat_id, verbose=verbose)
+    except Exception as exc:
+        # If the helper raises, we treat it as a failure and store the message
+        set_env("STATUS", "0")
+        set_env("EMSG", str(exc))
+        explain_info = pd.DataFrame()
+
+    if not isinstance(explain_info, pd.DataFrame):
+        # Assume the returned object contains an ``errMsg`` attribute
+        error_msg = getattr(explain_info, "errMsg", "Unknown error")
+        set_env("STATUS", "0")
+        set_env("EMSG", error_msg)
+        df_data = pd.DataFrame()
+    else:
+        df_data = explain_info
+
+    # ------------------------------------------------------------------
+    # Gather connection / user information
+    # ------------------------------------------------------------------
+    uid = get_env("USERNAME")
+    # Decode the base‑64 encoded DB information string
+    encoded_info = get_env(f"{schema.upper()}_INFO")
+    dbinfo = decode_base64(encoded_info)
+    dbid = dbinfo.split(":")[0]
+
+    table_id = "mt_kosis_statexpl"
+    table_nm = "KOSIS 통계조사 설명"
+
+    # ------------------------------------------------------------------
+    # No data case – just log the attempt
+    # ------------------------------------------------------------------
+    if df_data.empty:
+        if verbose:
+            logging.info(
+                f"No data retrieved for table ID: {table_id}. Import operation aborted."
+            )
+        end_dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status = "0"
+        rcnt = ccnt = 0
+        emsg = get_env("EMSG")
+        schema_nm = f"ecodi_{schema}"
+        insert_sql = (
+            f"INSERT INTO ecodi_meta.mt_log_dataimp "
+            f"(user_id, db_id, schema_nm, start_dt, end_dt, data_id, "
+            f"table_id, table_nm, api_params, record_cnt, column_cnt, "
+            f"status, error_msg, cret_nm) VALUES ("
+            f"'{uid}', '{dbid}', '{schema_nm}', '{start_dt}', '{end_dt}', "
+            f"'', '{table_id.upper()}', '{table_nm}', 'explain for {stat_id}', "
+            f"{rcnt}, {ccnt}, '{status}', '{emsg}', '{uid}');"
+        )
+    else:
+        # ------------------------------------------------------------------
+        # Normal case – ensure DB connection and load data
+        # ------------------------------------------------------------------
+        if not is_connected(schema):
+            db_connect(schema)
+
+        # Count rows before inserting
+        cnt_before_query = f"SELECT COUNT(*) FROM ecodi_meta.{table_id}"
+        cnt_before = getquery(cnt_before_query, schema).iloc[0, 0]
+
+        # Append the DataFrame to the target table
+        is_ok = db_settable(
+            name=table_id,
+            value=df_data,
+            append=True,
+            schema=schema
+        )
+
+        # Count rows after inserting
+        cnt_after_query = f"SELECT COUNT(*) FROM ecodi_meta.{table_id}"
+        cnt_after = getquery(cnt_after_query, schema).iloc[0, 0]
+
+        end_dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status = get_env("STATUS")
+        emsg = get_env("EMSG")
+        rcnt = int(cnt_after - cnt_before)
+        ccnt = 0 if status == "0" else df_data.shape[1]
+
+        schema_nm = f"ecodi_{schema}"
+        insert_sql = (
+            f"INSERT INTO ecodi_meta.mt_log_dataimp "
+            f"(user_id, db_id, schema_nm, start_dt, end_dt, data_id, "
+            f"table_id, table_nm, api_params, record_cnt, column_cnt, "
+            f"status, error_msg, cret_nm) VALUES ("
+            f"'{uid}', '{dbid}', '{schema_nm}', '{start_dt}', '{end_dt}', "
+            f"'', '{table_id.upper()}', '{table_nm}', 'explain for {stat_id}', "
+            f"{rcnt}, {ccnt}, '{status}', '{emsg}', '{uid}');"
+        )
+
+        # Close the connection for the working schema
+        db_close(schema)
+
+    # ------------------------------------------------------------------
+    # Write the log entry into mt_log_dataimp
+    # ------------------------------------------------------------------
+    log_schema = "meta"
+    db_connect(log_schema)
+    db_send_query(insert_sql, log_schema)
+        
+    if verbose:
+        logging.info(
+            f"Imported record count: {rcnt}, column count: {ccnt}, status: {status}"
+        )
+
+    # Return the success flag (True when data was appended)
+    return is_ok
+  
+  
   
   
 # Exported symbols (similar to R's @export)
@@ -1241,4 +1370,5 @@ __all__ = [
     "kosis_list_stats",
     "kosis_org_list",
     "import_kosis_indexpl",
+    "import_kosis_statexpl",
 ]

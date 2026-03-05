@@ -10,7 +10,6 @@ from ecodi.env import (
     unset_env,
     get_env,
     ecoDI_env,
-    init_env,
     encode_base64,
     decode_base64,
     initial_meta
@@ -37,7 +36,11 @@ from ecodi.dbms import (
     query_from_file,
     ddl_from_text,
     db_load_df,
-    get_odsinfo
+    get_odsinfo,
+    set_dbinfo,
+    table_to_csv,
+    schema_to_csv,
+    db_send_query
 )
 
 from ecodi.KOSIS import (
@@ -52,7 +55,8 @@ from ecodi.KOSIS import (
     kosis_list_parent,
     kosis_list_stats,
     kosis_org_list,
-    import_kosis_indexpl
+    import_kosis_indexpl,
+    import_kosis_statexpl
 )
 
 from ecodi.api import (

@@ -22,6 +22,8 @@ import pandas as pd
 import numpy as np
 import subprocess
 from pathlib import Path
+import shutil
+import importlib.resources
 
 from ecodi.env import (
     init_env,
@@ -31,7 +33,6 @@ from ecodi.env import (
     unset_env,
     get_env,
     ecoDI_env,
-    init_env,
     encode_base64,
     decode_base64,
     initial_meta
@@ -84,18 +85,33 @@ def _build_connection_string(
 # ----------------------------------------------------------------------
 def db_connect(
     schema: Union[str, List[str]] = ["meta", "ods", "data"],
-    host: str = "localhost",
+    host: Optional[str] = None,
     port: Optional[int] = None,
     user: Optional[str] = None,
     password: Optional[str] = None,
     dbms: str = get_env("ecoDI_DBMS") or "postgresql",
 ) -> None:
     """
-    Create (or replace) a database connection for the chosen *schema*.
+    Create a database connection and store it in environment variables.
 
-    The function stores the engine object in ``_env`` under the key
-    ``"{SCHEMA}_CON"`` and a Boolean flag under ``"{SCHEMA}_ISCONNCT"``.
+    Parameters
+    ----------
+    schema : str, optional
+        One of ``"meta"``, ``"ods"``, or ``"data"``. Default is ``"meta"``.
+    host : str, optional
+        Host address. If omitted it is read from the ``HOST_INFO`` environment
+        variable (base64‑encoded).
+    port : int, optional
+        Port number; automatically selected from the DBMS if not supplied.
+    user : str, optional
+        Username; fetched from ``<SCHEMA>_INFO`` if not supplied.
+    password : str, optional
+        Password; fetched from ``<SCHEMA>_INFO`` if not supplied.
+    dbms : str, optional
+        Database management system; defaults to the ``ecoDI_DBMS`` environment
+        variable. Must be either ``"postgresql"`` or ``"mysql"``.
     """
+    
     # Validate arguments
     dbms = _match_arg(dbms, ["postgresql", "mysql"])
     schema = _match_arg(schema, ["meta", "ods", "data"])
@@ -108,6 +124,13 @@ def db_connect(
     else:  # postgresql
         port = port or 5432
 
+    # Decode host if not explicitly provided
+    if host is None:
+        host_encoded = get_env("HOST_INFO")
+        if host_encoded is None:
+            raise RuntimeError("HOST_INFO environment variable is missing")
+        host = decode_base64(host_encoded)
+        
     # Close an existing connection for the same schema, if any
     if is_connected(schema):
         db_close(schema)
@@ -120,8 +143,7 @@ def db_connect(
         if encoded is None:
             raise RuntimeError(f"Missing environment variable: {info_key}")
 
-        decoded_bytes = base64.b64decode(encoded)
-        decoded = decoded_bytes.decode()
+        decoded = decode_base64(encoded)
         cred_user, cred_pass = decoded.split(":", 1)
 
         if user is None:
@@ -147,13 +169,16 @@ def db_connect(
 
 
 def meta_connect(
-    host: str = "localhost",
+    host: Optional[str] = None,
     port: Optional[int] = None,
     user: Optional[str] = None,
     password: Optional[str] = None,
     dbms: str = get_env("ecoDI_DBMS") or "postgresql",
 ) -> None:
     """Convenience wrapper for ``db_connect`` with the *meta* schema."""
+    if host is None:
+        host_encoded = get_env("HOST_INFO")
+        
     db_connect(
         schema="meta",
         host=host,
@@ -165,13 +190,16 @@ def meta_connect(
 
 
 def data_connect(
-    host: str = "localhost",
+    host: Optional[str] = None,
     port: Optional[int] = None,
     user: Optional[str] = None,
     password: Optional[str] = None,
     dbms: str = get_env("ecoDI_DBMS") or "postgresql",
 ) -> None:
     """Convenience wrapper for ``db_connect`` with the *data* schema."""
+    if host is None:
+        host_encoded = get_env("HOST_INFO")
+        
     db_connect(
         schema="data",
         host=host,
@@ -183,13 +211,16 @@ def data_connect(
 
 
 def ods_connect(
-    host: str = "localhost",
+    host: Optional[str] = None,
     port: Optional[int] = None,
     user: Optional[str] = None,
     password: Optional[str] = None,
     dbms: str = get_env("ecoDI_DBMS") or "postgresql",
 ) -> None:
     """Convenience wrapper for ``db_connect`` with the *ods* schema."""
+    if host is None:
+        host_encoded = get_env("HOST_INFO")
+        
     db_connect(
         schema="ods",
         host=host,
@@ -366,8 +397,7 @@ def getquery(sql: str,
 
     # Decode the base64‑encoded DB info string
     encoded_info = get_env(f"{schema.upper()}_INFO")
-    dbinfo_bytes = base64.b64decode(encoded_info) if encoded_info else b""
-    dbinfo = dbinfo_bytes.decode("utf-8", errors="ignore")
+    dbinfo = decode_base64(encoded_info) if encoded_info else b""
     dbid = dbinfo.split(":")[0] if ":" in dbinfo else ""
 
     # ------------------------------------------------------------------
@@ -642,8 +672,7 @@ def db_settable(
     encoded_info = get_env(f"{schema.upper()}_INFO")
     dbinfo = ""
     if encoded_info:
-        decoded_bytes = base64.b64decode(encoded_info)
-        dbinfo = decoded_bytes.decode()
+        dbinfo = decode_base64(encoded_info)
     dbid = dbinfo.split(":")[0] if dbinfo else "unknown_db"
 
     rcnt = 0 if status == "0" else len(value)
@@ -840,7 +869,7 @@ def db_load_csv(name: str,
 
     uid = get_env("USERNAME")
     dbinfo_b64 = get_env(f"{schema.upper()}_INFO")
-    dbinfo = base64.b64decode(dbinfo_b64).decode() if dbinfo_b64 else ""
+    dbinfo = decode_base64(dbinfo_b64).decode() if dbinfo_b64 else ""
     dbid = dbinfo.split(":")[0] if ":" in dbinfo else ""
 
     rcnt = 0 if status == "0" else len(df)
@@ -1277,6 +1306,176 @@ def get_odsinfo(type_: str = "df") -> pd.DataFrame:
         .to_html(index=False, escape=False, border=0, classes="ods-table")
     )
     return html_table
+
+
+def set_dbinfo(fname: str = "crawler") -> None:
+    """
+    Copy a database info file from the installed *ecoDI* package to the user's home directory.
+
+    Parameters
+    ----------
+    fname : str, optional
+        Name of the file to copy. Must be one of
+        ["crawler", "localhost"].
+        Defaults to "crawler".
+    """
+    allowed_fnames = ["crawler", "localhost"]
+    if fname not in allowed_fnames:
+        raise ValueError(
+            f"Invalid fname '{fname}'. Allowed values are: {allowed_fnames}"
+        )
+
+    source_fname = f"ecodi_dbinfo_{fname}.txt"
+    target_fname = ".ecoDI_dbinfo"
+
+    # Home directory of the current user
+    home_path = os.getenv("HOME")
+    if not home_path:
+        raise EnvironmentError("HOME environment variable is not set.")
+
+    # Destination path: <HOME>/<fname>
+    target_path = os.path.join(home_path, target_fname)
+
+    # Source path inside the installed ecoDI package:
+    # <package_root>/dbms/<fname>
+    try:
+        # `files` returns a Traversable object; we convert it to a string path.
+        source_dir = importlib.resources.files("ecodi").joinpath("dbms")
+        source_path = os.path.join(str(source_dir), source_fname)
+    except Exception as exc:
+        raise ImportError("Could not locate the ecoDI package files.") from exc
+
+    # Ensure the source file exists before copying
+    if not os.path.isfile(source_path):
+        raise FileNotFoundError(f"Source file not found: {source_path}")
+
+    # Copy the file, overwriting any existing target
+    shutil.copy2(src=source_path, dst=target_path)
+    
+    
+    
+
+def table_to_csv(
+    table_name: Optional[str] = None,
+    schema: str = "meta",
+    target_path: str = os.getcwd(),
+    dbms: str = get_env("ecoDI_DBMS") or "postgresql"
+) -> int:
+    """
+    Export a single table to a CSV file using the database server's native
+    export command (SELECT … INTO OUTFILE for MySQL, COPY for PostgreSQL).
+
+    Returns the number of rows affected or ``0`` on failure.
+    """
+    allowed_schemas = ("meta", "ods", "data")
+    if schema not in allowed_schemas:
+        raise ValueError(f"schema must be one of {allowed_schemas}")
+
+    target_dir = Path(target_path).expanduser().resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    csv_file = target_dir / f"{table_name}.csv"
+
+    # Ensure we have a connection
+    if not is_connected(schema):
+        db_connect(schema)
+
+    # Build the appropriate SQL statement
+    if dbms == "mysql":
+        sql = f"""
+        SELECT * INTO OUTFILE '{csv_file}'
+            FIELDS TERMINATED BY ','
+            ENCLOSED BY '\"'
+            LINES TERMINATED BY '\\n'
+        FROM {table_name};
+        """
+    elif dbms == "postgresql":
+        sql = f"""
+        COPY {table_name} TO '{csv_file}'
+        WITH (FORMAT csv, HEADER true, DELIMITER ',');
+        """
+    else:
+        raise ValueError(f"Unsupported DBMS: {dbms}")
+
+    rows_affected = 0
+
+    engine = get_env(f"{schema.upper()}_CON")
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text(sql))
+        rows_affected = result.rowcount or 0
+    except Exception as exc:
+        # Mimic the R side‑effects on the custom environment
+        set_env("STATUS", "0")
+        set_env("EMSG", str(exc))
+        print(
+            f"[ERROR] Failed to export table '{table_name}' to "
+            f"'{csv_file}': {get_env('EMSG')}"
+        )
+    else:
+        print(
+            f"[SUCCESS] Table '{table_name}' has been exported to "
+            f"'{csv_file}': {rows_affected} rows affected."
+        )
+
+    return rows_affected
+
+
+def schema_to_csv(
+    schema: str = "meta",
+    target_path: str = os.getcwd(),
+    dbms: str = get_env("ecoDI_DBMS") or "postgresql"
+) -> None:
+    """
+    Export *all* tables belonging to a given *schema* to CSV files
+    located in *target_path*.
+    """
+    allowed_schemas = ("meta", "ods", "data")
+    if schema not in allowed_schemas:
+        raise ValueError(f"schema must be one of {allowed_schemas}")
+
+    # Ensure we have a connection
+    if not is_connected(schema):
+        db_connect(schema)
+
+    # Query the catalog for table names belonging to the requested schema
+    catalog_sql = f"""
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'ecodi_{schema}';
+    """
+    tables = getquery(catalog_sql, schema)
+    # table_names: List[str] = [row["table_name"] for row in tables]
+    table_names: List[str] = list(tables["table_name"])
+
+    for name in table_names:
+        table_to_csv(
+            table_name=name,
+            schema=schema,
+            target_path=target_path,
+            dbms=dbms,
+        )
+        
+
+def db_send_query(sql: str, schema: str = "meta") -> int:
+    if not is_connected(schema):
+        db_connect(schema)
+
+    set_env("STATUS", "1")
+    set_env("EMSG", "")
+    
+    conn_schema = get_connection(schema)
+    
+    try:
+        with conn_schema.begin() as conn:   # ensures transaction handling
+            result = conn.execute(text(sql))
+            conn.commit()  # commit the transaction (for MySQL; PostgreSQL auto‑commits)
+        rows_affected = result.rowcount    
+    except Exception as e:
+        set_env("STATUS", "0")
+        set_env("EMSG", str(e))
+        rows_affected = 0
+        
+    return rows_affected
   
   
 # Exported symbols (similar to R's @export)
@@ -1302,6 +1501,10 @@ __all__ = [
     "ddl_from_text",
     "db_load_df",
     "get_odsinfo",
+    "set_dbinfo",
+    "table_to_csv",
+    "schema_to_csv",
+    "db_send_query"
 ]
 
   

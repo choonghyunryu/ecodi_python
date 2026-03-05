@@ -16,7 +16,7 @@ license-files = ["LICEN[CS]E*"]
 
 [tool.setuptools.package-data]
 # 'ecodi' 패키지 안에 있는 모든 .sql 파일 포함
-ecodi = ["dbms/ddl/postgresql/*.sql", "dbms/ddl/mysql/*.sql", "dbms/meta/*.csv"]
+ecodi = ["dbms/ddl/postgresql/*.sql", "dbms/ddl/mysql/*.sql", "dbms/meta/*.csv", "dbms/*.txt"]
 
 [project.urls]
 Homepage = "https://github.com/choonghyunryu/ecodi_python"

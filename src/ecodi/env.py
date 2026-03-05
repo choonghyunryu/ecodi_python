@@ -83,10 +83,11 @@ def init_env() -> None:
     dbinfo_path = Path.home() / ".ecoDI_dbinfo"
     if dbinfo_path.is_file():
         lines = dbinfo_path.read_text().splitlines()
-        if len(lines) >= 3:
+        if len(lines) >= 4:
             set_env("META_INFO", lines[0].strip())
             set_env("ODS_INFO", lines[1].strip())
             set_env("DATA_INFO", lines[2].strip())
+            set_env("HOST_INFO", lines[3].strip())
 
     # Set the DBMS
     set_env("ecoDI_DBMS", "postgresql")
