@@ -578,7 +578,7 @@ def db_settable(
     append: bool = False,
     schema: str = "meta",
     is_postfix: bool = True,
-    dbms: str | None = None
+    dbms: Optional[str] = None
 ) -> pd.DataFrame | None:
     """
     Write a pandas DataFrame to a database table, log the operation and

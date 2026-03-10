@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS ecodi_meta.mt_kosis_statexpl
     publict_mth      VARCHAR(2000),
     examin_trget_pd  VARCHAR(100),
     data_user_note   VARCHAR(2000),
-    main_term_expl   VARCHAR(2000),
+    main_term_expl   VARCHAR(6000),
     data_collect_mth VARCHAR(200),
     examin_history   VARCHAR(2000),
     confm_no         VARCHAR(10),

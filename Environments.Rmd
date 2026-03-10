@@ -189,5 +189,5 @@ python -m build
 ### Install package
 
 ```{bash, eval=FALSE}
-pip install ./dist/ecodi-0.1.1-py3-none-any.whl
+pip install ./dist/ecodi-0.1.2-py3-none-any.whl
 ```

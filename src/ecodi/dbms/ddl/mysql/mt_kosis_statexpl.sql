@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS ecodi_meta.mt_kosis_statexpl
     publict_mth      VARCHAR(2000)                   COMMENT '공표방법 및 URL',
     examin_trget_pd  VARCHAR(100)                    COMMENT '조사대상기간 및 조사기준시점',
     data_user_note   VARCHAR(2000)                   COMMENT '자료이용시 유의사항',
-    main_term_expl   VARCHAR(2000)                   COMMENT '주요 용어해설',
+    main_term_expl   VARCHAR(6000)                   COMMENT '주요 용어해설',
     data_collect_mth VARCHAR(200)                    COMMENT '자료 수집방법',
     examin_history   VARCHAR(2000)                   COMMENT '조사연혁',
     confm_no         VARCHAR(10)                     COMMENT '승인번호',

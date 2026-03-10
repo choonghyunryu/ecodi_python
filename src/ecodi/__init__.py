@@ -56,7 +56,20 @@ from ecodi.KOSIS import (
     kosis_list_stats,
     kosis_org_list,
     import_kosis_indexpl,
-    import_kosis_statexpl
+    import_kosis_statexpl,
+    import_kosis_item,
+    import_kosis_tbl,
+    import_kosis_prd,
+    import_kosis_src,
+    tab_kosis_desc,
+    mk_kosis_ddl_info,
+    mk_kosis_ddl,
+    insert_kosis_list,
+    insert_kosis_item,
+    insert_kosis_cmmt,
+    insert_kosis_update,
+    insert_kosis_paramset,
+    reorg_kosis_data
 )
 
 from ecodi.api import (
@@ -88,6 +101,15 @@ from ecodi.ecodi_system import (
     get_log_import,
     get_table_list,
     get_column_list
+)
+
+from ecodi.preprocess import (
+    mapp_name2mega,
+    mapp_name2cty,
+    ods2data,
+    mk_mart_ddl_info,
+    mk_mart_ddl,
+    mk_mart_table
 )
 
 
